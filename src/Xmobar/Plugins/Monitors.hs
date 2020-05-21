@@ -19,7 +19,7 @@ module Xmobar.Plugins.Monitors where
 
 import Xmobar.Run.Exec
 
-import Xmobar.Plugins.Monitors.Common (runM, runMD)
+import Xmobar.Plugins.Monitors.Common (runM)
 #ifdef WEATHER
 import Xmobar.Plugins.Monitors.Weather
 #endif
@@ -42,12 +42,12 @@ import Xmobar.Plugins.Monitors.CatInt
 #ifdef UVMETER
 import Xmobar.Plugins.Monitors.UVMeter
 #endif
-#ifdef IWLIB
+#if defined IWLIB || defined USE_NL80211
 import Xmobar.Plugins.Monitors.Wireless
 #endif
 #ifdef LIBMPD
 import Xmobar.Plugins.Monitors.MPD
-import Xmobar.Plugins.Monitors.Common (runMBD)
+import Xmobar.Plugins.Monitors.Common (runMBD, runMD)
 #endif
 #ifdef ALSA
 import Xmobar.Plugins.Monitors.Volume
@@ -85,7 +85,7 @@ data Monitors = Network      Interface   Args Rate
 #ifdef UVMETER
               | UVMeter      Station     Args Rate
 #endif
-#ifdef IWLIB
+#if defined IWLIB || defined USE_NL80211
               | Wireless Interface  Args Rate
 #endif
 #ifdef LIBMPD
@@ -142,7 +142,7 @@ instance Exec Monitors where
 #ifdef UVMETER
     alias (UVMeter s _ _) = "uv " ++ s
 #endif
-#ifdef IWLIB
+#if defined IWLIB || defined USE_NL80211
     alias (Wireless i _ _) = i ++ "wi"
 #endif
 #ifdef LIBMPD
@@ -164,8 +164,8 @@ instance Exec Monitors where
     start (TopProc a r) = startTop a r
     start (TopMem a r) = runM a topMemConfig runTopMem r
 #ifdef WEATHER
-    start (Weather s a r) = runMD (a ++ [s]) weatherConfig runWeather r weatherReady
-    start (WeatherX s c a r) = runMD (a ++ [s]) weatherConfig (runWeather' c) r weatherReady
+    start (Weather  s   a r) = startWeather    s a r
+    start (WeatherX s c a r) = startWeather' c s a r
 #endif
     start (Thermal z a r) = runM (a ++ [z]) thermalConfig runThermal r
     start (ThermalZone z a r) =
@@ -184,9 +184,9 @@ instance Exec Monitors where
     start (Uptime a r) = runM a uptimeConfig runUptime r
     start (CatInt _ s a r) = runM a catIntConfig (runCatInt s) r
 #ifdef UVMETER
-    start (UVMeter s a r) = runM (a ++ [s]) uvConfig runUVMeter r
+    start (UVMeter s a r) = startUVMeter s a r
 #endif
-#ifdef IWLIB
+#if defined IWLIB || defined USE_NL80211
     start (Wireless i a r) = runM a wirelessConfig (runWireless i) r
 #endif
 #ifdef LIBMPD

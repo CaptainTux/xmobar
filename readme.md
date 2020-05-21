@@ -117,11 +117,15 @@ Otherwise, you'll need to install them yourself.
   option is needed for the MBox and Mail plugins to work. Requires the
   [hinotify] package.
 
-- `with_iwlib` Support for wireless cards. Enables the Wireless
-   plugin. No Haskell library is required, but you will need the
-   [iwlib] C library and headers in your system (e.g., install
-   `libiw-dev` in Debian-based systems or `wireless_tools` on Arch
-   Linux).
+- `with_nl80211` Support for wireless cards on Linux via nl80211 (all
+   upstream drivers). Enables the Wireless plugin. Requires [netlink]
+   and [cereal] packages.
+
+- `with_iwlib` Support for wireless cards via Wext ioctls
+   (deprecated). Enables the Wireless plugin. No Haskell library is
+   required, but you will need the [iwlib] C library and headers in your
+   system (e.g., install `libiw-dev` in Debian-based systems or
+   `wireless_tools` on Arch Linux). Conflicts with `with_nl80211`.
 
 - `with_alsa` Support for ALSA sound cards. Enables the Volume
    plugin. Requires the [alsa-mixer] package.  To install the latter,
@@ -735,11 +739,20 @@ something like:
 - Aliases to the Station ID: so `Weather "LIPB" []` can be used in
   template as `%LIPB%`
 - Thresholds refer to temperature in the selected units
-- Args: default monitor arguments
+- Args: default monitor arguments, plus:
+  - `--weathers` _string_ : display a default string when the `weather`
+    variable is not reported.
+    - short option: `-w`
+    - Default: ""
+  - `--useManager` _bool_ : Whether to use one single manager per monitor for
+    managing network connections or create a new one every time a connection is
+    made.
+    - Short option: `-m`
+    - Default: True
 - Variables that can be used with the `-t`/`--template` argument:
 	    `station`, `stationState`, `year`, `month`, `day`, `hour`,
 	    `windCardinal`, `windAzimuth`, `windMph`, `windKnots`, `windMs`, `windKmh`
-        `visibility`, `skyCondition`, `tempC`, `tempF`,
+        `visibility`, `skyCondition`, `weather`, `tempC`, `tempF`,
 	    `dewPointC`, `dewPointF`, `rh`, `pressure`
 - Default template: `<station>: <tempC>C, rh <rh>% (<hour>)`
 - Retrieves weather information from http://tgftp.nws.noaa.gov.
@@ -785,11 +798,14 @@ specification, such as `("clear", "<icon=weather-clear.xbm/>")`.
 - Args: default monitor arguments, plus:
   - `--rx-icon-pattern`: dynamic string for reception rate in `rxipat`.
   - `--tx-icon-pattern`: dynamic string for transmission rate in `txipat`.
+  - `--up`: string used for the `up` variable value when the
+    interface is up.
 - Variables that can be used with the `-t`/`--template` argument:
   `dev`, `rx`, `tx`, `rxbar`, `rxvbar`, `rxipat`, `txbar`, `txvbar`,
-  `txipat`. Reception and transmission rates (`rx` and `tx`) are displayed
-  by default as Kb/s, without any suffixes, but you can set the `-S` to
-  "True" to make them displayed with adaptive units (Kb/s, Mb/s, etc.).
+  `txipat`, `up`. Reception and transmission rates (`rx` and `tx`) are
+  displayed by default as Kb/s, without any suffixes, but you can set
+  the `-S` to "True" to make them displayed with adaptive units (Kb/s,
+  Mb/s, etc.).
 - Default template: `<dev>: <rx>KB|<tx>KB`
 
 ### `DynNetwork Args RefreshRate`
@@ -799,28 +815,33 @@ specification, such as `("clear", "<icon=weather-clear.xbm/>")`.
 - Thresholds are expressed in Kb/s
 - Args: default monitor arguments, plus:
   - `--rx-icon-pattern`: dynamic string for reception rate in `rxipat`.
-  - `--tx-icon-pattern`: dynamic string for transmission rate in `txipat`.
+  - `--tx-icon-pattern`: dynamic string for transmission rate in `txipat`
+  - `--devices`: comma-separated list of devices to show.
 - Variables that can be used with the `-t`/`--template` argument:
   `dev`, `rx`, `tx`, `rxbar`, `rxvbar`, `rxipat`, `txbar`, `txvbar`,
   `txipat`. Reception and transmission rates (`rx` and `tx`) are displayed
   in Kbytes per second, and you can set the `-S` to "True" to make them
   displayed with units (the string "Kb/s").
 - Default template: `<dev>: <rx>KB|<tx>KB`
+- Example of usage of `--devices` option: `["--", "--devices", "wlp2s0,enp0s20f41"]`
 
 ### `Wireless Interface Args RefreshRate`
 
-- If set to "", the interface is looked up in /proc/net/wireless.
+- If set to "", first suitable wireless interface is used.
 - Aliases to the interface name with the suffix "wi": thus, `Wireless
   "wlan0" []` can be used as `%wlan0wi%`, and `Wireless "" []` as `%wi%`.
 - Args: default monitor arguments, plus:
   - `--quality-icon-pattern`: dynamic string for connection quality in `qualityipat`.
 - Variables that can be used with the `-t`/`--template` argument:
-            `essid`, `quality`, `qualitybar`, `qualityvbar`, `qualityipat`
-- Thresholds refer to link quality in a `[0, 100]` scale
-- Default template: `<essid> <quality>`
-- Requires the C library [iwlib] (part of the wireless tools suite)
-  installed in your system. In addition, to activate this plugin you
-  must pass `--flags="with_iwlib"` during compilation
+            `ssid`, `signal`, `quality`, `qualitybar`, `qualityvbar`, `qualityipat`
+- Thresholds refer to link quality on a `[0, 100]` scale. Note that
+  `quality` is calculated from `signal` (in dBm) by a possibly lossy
+  conversion. It is also not taking into account many factors such as
+  noise level, air busy time, transcievers' capabilities and the
+  others which can have drastic impact on the link performance.
+- Default template: `<ssid> <quality>`
+- To activate this plugin you must pass `--flags="with_nl80211"` or
+  `--flags="with_iwlib"` during compilation
 
 ### `Memory Args RefreshRate`
 
@@ -922,7 +943,7 @@ specification, such as `("clear", "<icon=weather-clear.xbm/>")`.
     threshold (default: "")
   - `--mediums`: string for AC "off" status and power lower than the `-H`
     threshold (default: "")
-  - `--high`: string for AC "off" status and power higher than the `-H`
+  - `--highs`: string for AC "off" status and power higher than the `-H`
     threshold (default: "")
 
 
@@ -1129,7 +1150,7 @@ more than one battery.
 
          Run MultiCoreTemp ["-t", "Temp: <avg>°C | <avgpc>%",
                             "-L", "60", "-H", "80",
-                            "-l", "green", "-n", "yellow", "-h", "red"
+                            "-l", "green", "-n", "yellow", "-h", "red",
                             "--", "--mintemp", "20", "--maxtemp", "100"] 50
 
 ### `Volume Mixer Element Args RefreshRate`
@@ -1176,7 +1197,8 @@ more than one battery.
           Defaults to "".
         - Long option: `--lows`
 - Variables that can be used with the `-t`/`--template` argument:
-            `volume`, `volumebar`, `volumevbar`, `volumeipat`, `dB`, `status`
+            `volume`, `volumebar`, `volumevbar`, `volumeipat`, `dB`, `status`,
+            `volumestatus`
 - Note that `dB` might only return 0 on your system. This is known
   to happen on systems with a pulseaudio backend.
 - Default template: `Vol: <volume>% <status>`
@@ -1212,7 +1234,9 @@ following differences:
   `-S` and `-Z`, with an string argument, to represent the playing,
   stopped and paused states in the `statei` template field.  The
   environment variables `MPD_HOST` and `MPD_PORT` are used to
-  configure the mpd server to communicate with. Also available:
+  configure the mpd server to communicate with, unless given in the
+  additional arguments `-p` (`--port`) and `-h` (`--host`). Also
+  available:
   - `lapsed-icon-pattern`: dynamic string for current track position in `ipat`.
 - Variables that can be used with the `-t`/`--template` argument:
              `bar`, `vbar`, `ipat`, `state`, `statei`, `volume`, `length`,
@@ -1405,9 +1429,14 @@ following differences:
 
 ### `UVMeter`
 
-- Aliases to "uv " + station id. For example: `%uv brisbane%` or `%uv
-  alice springs%`
-- Args: default monitor arguments.
+- Aliases to "uv " + station id. For example: `%uv Brisbane%` or `%uv
+  Alice Springs%`
+- Args: default monitor arguments, plus:
+  - `--useManager` _bool_ : Whether to use one single manager per monitor for
+    managing network connections or create a new one every time a connection is
+    made.
+    - Short option: `-m`
+    - Default: True
 
 - *Reminder:* Keep the refresh rate high, to avoid making unnecessary
   requests every time the plug-in is run.
@@ -1415,7 +1444,7 @@ following differences:
   http://www.arpansa.gov.au/uvindex/realtime/xml/uvvalues.xml
 - Example:
 
-        Run UVMeter "brisbane" ["-H", "3", "-L", "3", "--low", "green", "--high", "red"] 900
+        Run UVMeter "Brisbane" ["-H", "3", "-L", "3", "--low", "green", "--high", "red"] 900
 
 ## Executing External Commands
 
@@ -1584,6 +1613,23 @@ will display "N/A" if for some reason the `date` invocation fails.
           logHook = dynamicLogString myPP >>= xmonadPropLog
         }
 
+### `HandleReader Handle Alias`
+
+- Display data from a Haskell `Handle`
+- This plugin is only useful if you are running xmobar from another Haskell
+  program like XMonad.
+- You can use `System.Process.createPipe` to create a pair of `read` & `write`
+  Handles. Pass the `read` Handle to HandleReader and write your output to the
+  `write` Handle:
+
+        (readHandle, writeHandle) <- createPipe
+        xmobarProcess <- forkProcess $ xmobar myConfig
+                { commands =
+                    Run (HandleReader readHandle "handle") : commands myConfig
+                }
+        hPutStr writeHandle "Hello World"
+
+
 # Plugins
 
 ## Writing a Plugin
@@ -1663,21 +1709,22 @@ version 0.11.1. Since then, it is maintained and developed by [jao],
 with the help of the greater xmobar and Haskell communities.
 
 In particular, xmobar [incorporates patches] by Mohammed Alshiekh,
-Alex Ameen, Axel Angel, Claudio Bley, Dragos Boca, Ben Boeckel, Duncan
-Burke, Roman Cheplyaka, Patrick Chilton, Antoine Eiche, Nathaniel
-Wesley Filardo, John Goerzen, Reto Hablützel, Juraj Hercek, Tomáš
-Janoušek, Ada Joule, Spencer Janssen, Roman Joost, Jochen Keil,
-Lennart Kolmodin, Krzysztof Kosciuszkiewicz, Dmitry Kurochkin, Todd
-Lunter, Vanessa McHale, Robert J. Macomber, Dmitry Malikov, David
-McLean, Marcin Mikołajczyk, Dino Morelli, Tony Morris, Eric Mrak,
-Thiago Negri, Edward O'Callaghan, Svein Ove, Martin Perner, Jens
-Petersen, Alexander Polakov, Pavan Rikhi, Petr Rockai, Andrew
-Sackville-West, Markus Scherer, Daniel Schüssler, Olivier Schneider,
-Alexander Shabalin, Valentin Shirokov, Peter Simons, Alexander
-Solovyov, Will Song, John Soros, Felix Springer, Travis Staton, Artem
-Tarasov, Samuli Thomasson, Edward Tjörnhammar, Sergei Trofimovich,
-Thomas Tuegel, John Tyree, Jan Vornberger, Anton Vorontsov, Daniel
-Wagner, Zev Weiss, Phil Xiaojun Hu, Edward Z. Yang and Norbert Zeh.
+Alex Ameen, Axel Angel, Dhananjay Balan, Claudio Bley, Dragos Boca,
+Ben Boeckel, Duncan Burke, Roman Cheplyaka, Patrick Chilton, Antoine
+Eiche, Nathaniel Wesley Filardo, John Goerzen, Reto Hablützel, Juraj
+Hercek, Tomáš Janoušek, Ada Joule, Spencer Janssen, Roman Joost,
+Jochen Keil, Lennart Kolmodin, Krzysztof Kosciuszkiewicz, Dmitry
+Kurochkin, Todd Lunter, Vanessa McHale, Robert J. Macomber, Dmitry
+Malikov, David McLean, Marcin Mikołajczyk, Dino Morelli, Tony Morris,
+Eric Mrak, Thiago Negri, Edward O'Callaghan, Svein Ove, Martin Perner,
+Jens Petersen, Alexander Polakov, Sibi Prabakaran, Pavan Rikhi, Petr
+Rockai, Andrew Emmanuel Rosa, Sackville-West, Markus Scherer, Daniel
+Schüssler, Olivier Schneider, Alexander Shabalin, Valentin Shirokov,
+Peter Simons, Alexander Solovyov, Will Song, John Soros, Felix
+Springer, Travis Staton, Artem Tarasov, Samuli Thomasson, Edward
+Tjörnhammar, Sergei Trofimovich, Thomas Tuegel, John Tyree, Jan
+Vornberger, Anton Vorontsov, Daniel Wagner, Zev Weiss, Phil Xiaojun
+Hu, Edward Z. Yang and Norbert Zeh.
 
 [jao]: http://jao.io
 [incorporates patches]: http://www.ohloh.net/p/xmobar/contributors
@@ -1714,7 +1761,7 @@ giving me the chance to contribute.
 This software is released under a BSD-style license. See [LICENSE] for
 more details.
 
-Copyright &copy; 2010-2019 Jose Antonio Ortega Ruiz
+Copyright &copy; 2010-2020 Jose Antonio Ortega Ruiz
 
 Copyright &copy; 2007-2010 Andrea Rossato
 

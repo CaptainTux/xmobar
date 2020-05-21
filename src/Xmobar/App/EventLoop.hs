@@ -17,7 +17,12 @@
 ------------------------------------------------------------------------------
 
 
-module Xmobar.App.EventLoop (startLoop, startCommand) where
+module Xmobar.App.EventLoop
+    ( startLoop
+    , startCommand
+    , newRefreshLock
+    , refreshLock
+    ) where
 
 import Prelude hiding (lookup)
 import Graphics.X11.Xlib hiding (textExtents, textWidth)
@@ -31,10 +36,11 @@ import Control.Monad.Reader
 import Control.Concurrent
 import Control.Concurrent.Async (Async, async)
 import Control.Concurrent.STM
-import Control.Exception (handle, SomeException(..))
+import Control.Exception (bracket_, handle, SomeException(..))
 import Data.Bits
 import Data.Map hiding (foldr, map, filter)
 import Data.Maybe (fromJust, isJust)
+import qualified Data.List.NonEmpty as NE
 
 import Xmobar.System.Signal
 import Xmobar.Config.Types
@@ -47,7 +53,11 @@ import Xmobar.X11.Text
 import Xmobar.X11.Draw
 import Xmobar.X11.Bitmap as Bitmap
 import Xmobar.X11.Types
+import Xmobar.System.Utils (safeIndex)
+
+#ifndef THREADED_RUNTIME
 import Xmobar.X11.Events(nextEvent')
+#endif
 
 #ifdef XFT
 import Graphics.X11.Xft
@@ -60,15 +70,34 @@ import Xmobar.System.DBus
 runX :: XConf -> X () -> IO ()
 runX xc f = runReaderT f xc
 
+newRefreshLock :: IO (TMVar ())
+newRefreshLock = atomically $ newTMVar ()
+
+refreshLock :: TMVar () -> IO a -> IO a
+refreshLock var = bracket_ lock unlock
+    where
+        lock = atomically $ takeTMVar var
+        unlock = atomically $ putTMVar var ()
+
+refreshLockT :: TMVar () -> STM a -> STM a
+refreshLockT var action = do
+    takeTMVar var
+    r <- action
+    putTMVar var ()
+    return r
+
 -- | Starts the main event loop and threads
-startLoop :: XConf -> TMVar SignalType -> [[([Async ()], TVar String)]]
-             -> IO ()
-startLoop xcfg@(XConf _ _ w _ _ _ _) sig vs = do
+startLoop :: XConf
+          -> TMVar SignalType
+          -> TMVar ()
+          -> [[([Async ()], TVar String)]]
+          -> IO ()
+startLoop xcfg@(XConf _ _ w _ _ _ _) sig pauser vs = do
 #ifdef XFT
     xftInitFtLibrary
 #endif
     tv <- atomically $ newTVar []
-    _ <- forkIO (handle (handler "checker") (checker tv [] vs sig))
+    _ <- forkIO (handle (handler "checker") (checker tv [] vs sig pauser))
 #ifdef THREADED_RUNTIME
     _ <- forkOS (handle (handler "eventer") (eventer sig))
 #else
@@ -108,15 +137,16 @@ checker :: TVar [String]
            -> [String]
            -> [[([Async ()], TVar String)]]
            -> TMVar SignalType
+           -> TMVar ()
            -> IO ()
-checker tvar ov vs signal = do
-      nval <- atomically $ do
+checker tvar ov vs signal pauser = do
+      nval <- atomically $ refreshLockT pauser $ do
               nv <- mapM concatV vs
               guard (nv /= ov)
               writeTVar tvar nv
               return nv
       atomically $ putTMVar signal Wakeup
-      checker tvar nval vs signal
+      checker tvar nval vs signal pauser
     where
       concatV = fmap concat . mapM (readTVar . snd)
 
@@ -180,7 +210,7 @@ eventLoop tv xc@(XConf d r w fs vos is cfg) as signal = do
             eventLoop tv xc as signal
 
         reposWindow rcfg = do
-          r' <- repositionWin d w (head fs) rcfg
+          r' <- repositionWin d w (NE.head fs) rcfg
           eventLoop tv (XConf d r' w fs vos is rcfg) as signal
 
         updateConfigPosition ocfg =
@@ -234,7 +264,7 @@ updateActions conf (Rectangle _ _ wid _) ~[left,center,right] = do
       strLn :: [(Widget, String, Int, Maybe [Action])] -> IO [(Maybe [Action], Position, Position)]
       strLn  = liftIO . mapM getCoords
       iconW i = maybe 0 Bitmap.width (lookup i $ iconS conf)
-      getCoords (Text s,_,i,a) = textWidth d (fs!!i) s >>= \tw -> return (a, 0, fi tw)
+      getCoords (Text s,_,i,a) = textWidth d (safeIndex fs i) s >>= \tw -> return (a, 0, fi tw)
       getCoords (Icon s,_,_,a) = return (a, 0, fi $ iconW s)
       partCoord off xs = map (\(a, x, x') -> (fromJust a, x, x')) $
                          filter (\(a, _,_) -> isJust a) $

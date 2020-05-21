@@ -20,8 +20,7 @@ module Xmobar.Run.Command where
 import Control.Exception (handle, SomeException(..))
 import System.Process
 import System.Exit
-import System.IO (hClose)
-import Xmobar.System.Utils (hGetLineSafe)
+import System.IO (hClose, hGetLine)
 
 import Xmobar.Run.Exec
 
@@ -41,13 +40,13 @@ instance Exec Command where
     start (Com p as al r) cb =
       start (ComX p as ("Could not execute command " ++ p) al r) cb
     start (ComX prog args msg _ r) cb = if r > 0 then go else exec
-        where go = exec >> tenthSeconds r >> go
+        where go = doEveryTenthSeconds r exec
               exec = do
                 (i,o,e,p) <- runInteractiveProcess prog args Nothing Nothing
                 exit <- waitForProcess p
                 let closeHandles = hClose o >> hClose i >> hClose e
                     getL = handle (\(SomeException _) -> return "")
-                                  (hGetLineSafe o)
+                                  (hGetLine o)
                 case exit of
                   ExitSuccess -> do str <- getL
                                     closeHandles

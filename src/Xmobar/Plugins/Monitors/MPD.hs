@@ -20,20 +20,25 @@ import Xmobar.Plugins.Monitors.Common
 import System.Console.GetOpt
 import qualified Network.MPD as M
 import Control.Concurrent (threadDelay)
+import Control.Monad.Except (catchError)
+
+templateVars :: [String]
+templateVars = [ "bar", "vbar", "ipat", "state", "statei", "volume", "length"
+               , "lapsed", "remaining", "plength", "ppos", "flags", "file"
+               , "name", "artist", "composer", "performer"
+               , "album", "title", "track", "genre", "date"
+               ]
 
 mpdConfig :: IO MConfig
-mpdConfig = mkMConfig "MPD: <state>"
-              [ "bar", "vbar", "ipat", "state", "statei", "volume", "length"
-              , "lapsed", "remaining", "plength", "ppos", "flags", "file"
-              , "name", "artist", "composer", "performer"
-              , "album", "title", "track", "genre", "date"
-              ]
+mpdConfig = mkMConfig "MPD: <state>" templateVars
 
 data MOpts = MOpts
   { mPlaying :: String
   , mStopped :: String
   , mPaused :: String
   , mLapsedIconPattern :: Maybe IconPattern
+  , mPort :: Maybe String
+  , mHost :: Maybe String
   }
 
 defaultOpts :: MOpts
@@ -42,6 +47,8 @@ defaultOpts = MOpts
   , mStopped = "><"
   , mPaused = "||"
   , mLapsedIconPattern = Nothing
+  , mPort = Nothing
+  , mHost = Nothing
   }
 
 options :: [OptDescr (MOpts -> MOpts)]
@@ -49,15 +56,21 @@ options =
   [ Option "P" ["playing"] (ReqArg (\x o -> o { mPlaying = x }) "") ""
   , Option "S" ["stopped"] (ReqArg (\x o -> o { mStopped = x }) "") ""
   , Option "Z" ["paused"] (ReqArg (\x o -> o { mPaused = x }) "") ""
+  , Option "p" ["port"] (ReqArg (\x o -> o { mPort = Just x }) "") ""
+  , Option "h" ["host"] (ReqArg (\x o -> o { mHost = Just x }) "") ""
   , Option "" ["lapsed-icon-pattern"] (ReqArg (\x o ->
      o { mLapsedIconPattern = Just $ parseIconPattern x }) "") ""
   ]
 
+withMPD :: MOpts -> M.MPD a -> IO (M.Response a)
+withMPD opts a =
+  M.withMPD_ (mHost opts) (mPort opts) a `catchError` (\_ -> return (Left M.NoMPD))
+
 runMPD :: [String] -> Monitor String
 runMPD args = do
-  opts <- io $ mopts args
-  status <- io $ M.withMPD M.status
-  song <- io $ M.withMPD M.currentSong
+  opts <- io $ parseOptsWith options defaultOpts args
+  status <- io $ withMPD opts M.status
+  song <- io $ withMPD opts M.currentSong
   s <- parseMPD status song opts
   parseTemplate s
 
@@ -65,12 +78,13 @@ mpdWait :: IO ()
 mpdWait = do
   status <- M.withMPD $ M.idle [M.PlayerS, M.MixerS, M.OptionsS]
   case status of
-    Left _ -> threadDelay 10000000
+    Left _ -> threadDelay 5000
     _ -> return ()
 
 mpdReady :: [String] -> Monitor Bool
-mpdReady _ = do
-  response <- io $ M.withMPD M.ping
+mpdReady args = do
+  opts <- io $ parseOptsWith options defaultOpts args
+  response <- io $ withMPD opts M.ping
   case response of
     Right _         -> return True
     -- Only cases where MPD isn't responding is an issue; bogus information at
@@ -79,27 +93,23 @@ mpdReady _ = do
     Left (M.ConnectionError _) -> return False
     Left _          -> return True
 
-mopts :: [String] -> IO MOpts
-mopts argv =
-  case getOpt Permute options argv of
-    (o, _, []) -> return $ foldr id defaultOpts o
-    (_, _, errs) -> ioError . userError $ concat errs
-
 parseMPD :: M.Response M.Status -> M.Response (Maybe M.Song) -> MOpts
             -> Monitor [String]
-parseMPD (Left e) _ _ = return $ show e:replicate 19 ""
+parseMPD (Left _) _ _ = return $ "N/A": repeat ""
 parseMPD (Right st) song opts = do
   songData <- parseSong song
   bar <- showPercentBar (100 * b) b
   vbar <- showVerticalBar (100 * b) b
   ipat <- showIconPattern (mLapsedIconPattern opts) b
-  return $ [bar, vbar, ipat, ss, si, vol, len, lap, remain, plen, ppos, flags] ++ songData
+  return $ [bar, vbar, ipat, ss, si, vol, len, lap, remain, plen, ppos, flags]
+           ++ songData
   where s = M.stState st
         ss = show s
         si = stateGlyph s opts
         vol = int2str $ fromMaybe 0 (M.stVolume st)
         (p, t) = fromMaybe (0, 0) (M.stTime st)
-        [lap, len, remain] = map showTime [floor p, floor t, max 0 (floor t - floor p)]
+        [lap, len, remain] = map showTime
+                                 [floor p, floor t, max 0 (floor t - floor p)]
         b = if t > 0 then realToFrac $ p / t else 0
         plen = int2str $ M.stPlaylistLength st
         ppos = maybe "" (int2str . (+1)) $ M.stSongPos st

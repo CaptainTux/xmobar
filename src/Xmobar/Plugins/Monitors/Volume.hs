@@ -1,7 +1,7 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Plugins.Monitors.Volume
--- Copyright   :  (c) 2011, 2013, 2015, 2018 Thomas Tuegel
+-- Copyright   :  (c) 2011, 2013, 2015, 2018, 2020 Thomas Tuegel
 -- License     :  BSD-style (see LICENSE)
 --
 -- Maintainer  :  Jose A. Ortega Ruiz <jao@gnu.org>
@@ -29,10 +29,19 @@ import Sound.ALSA.Mixer
 import qualified Sound.ALSA.Exception as AE
 import System.Console.GetOpt
 
-volumeConfig :: IO MConfig
-volumeConfig = mkMConfig "Vol: <volume>% <status>"
-                         ["volume", "volumebar", "volumevbar", "dB","status", "volumeipat"]
 
+volumeConfig :: IO MConfig
+volumeConfig =
+    mkMConfig
+        "Vol: <volume>% <status>"
+        [ "volume"
+        , "volumebar"
+        , "volumevbar"
+        , "dB"
+        , "status"
+        , "volumeipat"
+        , "volumestatus"
+        ]
 
 data VolumeOpts = VolumeOpts
     { onString :: String
@@ -101,12 +110,6 @@ options =
     , Option "h" ["highs"] (ReqArg (\x o -> o { highString = x }) "") ""
     ]
 
-parseOpts :: [String] -> IO VolumeOpts
-parseOpts argv =
-    case getOpt Permute options argv of
-        (o, _, []) -> return $ foldr id defaultOpts o
-        (_, _, errs) -> ioError . userError $ concat errs
-
 percent :: Integer -> Integer -> Integer -> Float
 percent v' lo' hi' = (v - lo) / (hi - lo)
   where v = fromIntegral v'
@@ -141,7 +144,7 @@ switchHelper opts cHelp strHelp vs = return $
     ++ maybe "" (const "</fc>") (cHelp opts)
 
 formatSwitch :: VolumeOpts -> Bool -> VolumeStatus -> Monitor String
-formatSwitch opts True vs = switchHelper opts onColor onString vs
+formatSwitch opts True  vs = switchHelper opts onColor  onString  vs
 formatSwitch opts False _  = switchHelper opts offColor offString VolOff
 
 -- | Convert the current volume status into user defined strings
@@ -173,7 +176,7 @@ formatDb opts dbi = do
 
 runVolume :: String -> String -> [String] -> Monitor String
 runVolume mixerName controlName argv = do
-    opts <- io $ parseOpts argv
+    opts <- io $ parseOptsWith options defaultOpts argv
     runVolumeWith opts mixerName controlName
 
 runVolumeWith :: VolumeOpts -> String -> String -> Monitor String
@@ -189,7 +192,13 @@ runVolumeWith opts mixerName controlName = do
                          (liftA3 percent val lo hi) -- current volume in %
     s <- getFormatSwitch opts sw volStat
     ipat <- liftMonitor $ liftM3 (formatVolDStr $ volumeIconPattern opts) lo hi val
-    parseTemplate [p, b, v, d, s, ipat]
+
+    -- Volume and status in one.
+    let vs = if isVolOff sw
+            then offString opts -- User defined off string
+            else s ++ p         -- Status string, current volume in %
+
+    parseTemplate [p, b, v, d, s, ipat, vs]
 
   where
 
@@ -245,4 +254,7 @@ runVolumeWith opts mixerName controlName = do
     getFormatSwitch _ _ Nothing = unavailable
     getFormatSwitch opts' (Just sw) (Just vs) = formatSwitch opts' sw vs
 
+    -- | Determine whether the volume is off based on the value of 'sw' from
+    -- 'runVolumeWith'.
+    isVolOff = (Just True /=)
     unavailable = getConfigValue naString

@@ -19,6 +19,9 @@ module Xmobar.Plugins.Monitors.Common.Run ( runM
                                           , runMD
                                           , runMB
                                           , runMBD
+                                          , runML
+                                          , runMLD
+                                          , getArgvs
                                           ) where
 
 import Control.Exception (SomeException,handle)
@@ -27,7 +30,7 @@ import Control.Monad.Reader
 import System.Console.GetOpt
 
 import Xmobar.Plugins.Monitors.Common.Types
-import Xmobar.Run.Exec (tenthSeconds)
+import Xmobar.Run.Exec (doEveryTenthSeconds)
 
 options :: [OptDescr Opts]
 options =
@@ -54,6 +57,13 @@ options =
     , Option "T" ["maxtwidth"] (ReqArg MaxTotalWidth "Maximum total width") "Maximum total width"
     , Option "E" ["maxtwidthellipsis"] (ReqArg MaxTotalWidthEllipsis "Maximum total width ellipsis") "Ellipsis to be added to the total text when it has reached its max width."
     ]
+
+-- | Get all argument values out of a list of arguments.
+getArgvs :: [String] -> [String]
+getArgvs args =
+    case getOpt Permute options args of
+        (_, n, []  ) -> n
+        (_, _, errs) -> errs
 
 doArgs :: [String]
        -> ([String] -> Monitor String)
@@ -100,11 +110,11 @@ doConfigOptions (o:oo) =
 
 runM :: [String] -> IO MConfig -> ([String] -> Monitor String) -> Int
         -> (String -> IO ()) -> IO ()
-runM args conf action r = runMB args conf action (tenthSeconds r)
+runM args conf action r = runML args conf action (doEveryTenthSeconds r)
 
 runMD :: [String] -> IO MConfig -> ([String] -> Monitor String) -> Int
         -> ([String] -> Monitor Bool) -> (String -> IO ()) -> IO ()
-runMD args conf action r = runMBD args conf action (tenthSeconds r)
+runMD args conf action r = runMLD args conf action (doEveryTenthSeconds r)
 
 runMB :: [String] -> IO MConfig -> ([String] -> Monitor String) -> IO ()
         -> (String -> IO ()) -> IO ()
@@ -115,6 +125,17 @@ runMBD :: [String] -> IO MConfig -> ([String] -> Monitor String) -> IO ()
 runMBD args conf action wait detect cb = handle (cb . showException) loop
   where ac = doArgs args action detect
         loop = conf >>= runReaderT ac >>= cb >> wait >> loop
+
+runML :: [String] -> IO MConfig -> ([String] -> Monitor String)
+      -> (IO () -> IO ()) -> (String -> IO ()) -> IO ()
+runML args conf action looper = runMLD args conf action looper (\_ -> return True)
+
+runMLD :: [String] -> IO MConfig -> ([String] -> Monitor String)
+       -> (IO () -> IO ()) -> ([String] -> Monitor Bool) -> (String -> IO ())
+       -> IO ()
+runMLD args conf action looper detect cb = handle (cb . showException) loop
+  where ac = doArgs args action detect
+        loop = looper $ conf >>= runReaderT ac >>= cb
 
 showException :: SomeException -> String
 showException = ("error: "++) . show . flip asTypeOf undefined

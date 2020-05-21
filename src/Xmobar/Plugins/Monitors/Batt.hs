@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Plugins.Monitors.Batt
@@ -17,11 +19,14 @@ module Xmobar.Plugins.Monitors.Batt ( battConfig, runBatt, runBatt' ) where
 
 import System.Process (system)
 import Control.Monad (void, unless)
-import Control.Exception (SomeException, handle)
 import Xmobar.Plugins.Monitors.Common
+import Control.Exception (SomeException, handle)
 import System.FilePath ((</>))
 import System.IO (IOMode(ReadMode), hGetLine, withFile)
 import System.Posix.Files (fileExist)
+#ifdef FREEBSD
+import System.BSD.Sysctl (sysctlReadInt)
+#endif
 import System.Console.GetOpt
 import Data.List (sort, sortBy, group)
 import Data.Maybe (fromMaybe)
@@ -103,14 +108,8 @@ options =
   , Option "" ["highs"] (ReqArg (\x o -> o { highString = x }) "") ""
   ]
 
-parseOpts :: [String] -> IO BattOpts
-parseOpts argv =
-  case getOpt Permute options argv of
-    (o, _, []) -> return $ foldr id defaultOpts o
-    (_, _, errs) -> ioError . userError $ concat errs
-
 data Status = Charging | Discharging | Full | Idle | Unknown deriving (Read, Eq)
-
+-- Result perc watts time-seconds Status
 data Result = Result Float Float Float Status | NA
 
 sysDir :: FilePath
@@ -154,6 +153,39 @@ getBattStatus charge opts
  where
    c = 100 * min 1 charge
 
+maybeAlert :: BattOpts -> Float -> IO ()
+maybeAlert opts left =
+  case onLowAction opts of
+    Nothing -> return ()
+    Just x -> unless (isNaN left || actionThreshold opts < 100 * left)
+                $ void $ system x
+
+-- | FreeBSD battery query
+#ifdef FREEBSD
+battStatusFbsd :: Int -> Status
+battStatusFbsd x
+  | x == 1 = Discharging
+  | x == 2 = Charging
+  | otherwise = Unknown
+
+readBatteriesFbsd :: BattOpts -> IO Result
+readBatteriesFbsd opts = do
+  lf <- sysctlReadInt "hw.acpi.battery.life"
+  rt <- sysctlReadInt "hw.acpi.battery.rate"
+  tm <- sysctlReadInt "hw.acpi.battery.time"
+  st <- sysctlReadInt "hw.acpi.battery.state"
+  acline <- sysctlReadInt "hw.acpi.acline"
+  let p = fromIntegral lf / 100
+      w = fromIntegral rt
+      t = fromIntegral tm * 60
+      ac = acline == 1
+      -- battery full when rate is 0 and on ac.
+      sts = if (w == 0 && ac) then Full else (battStatusFbsd $ fromIntegral st)
+  unless ac (maybeAlert opts p)
+  return (Result p w t sts)
+
+#else
+-- | query linux battery
 safeFileExist :: String -> String -> IO Bool
 safeFileExist d f = handle noErrors $ fileExist (d </> f)
   where noErrors = const (return False) :: SomeException -> IO Bool
@@ -195,7 +227,7 @@ readBattery sc files =
            a' = max a b -- sometimes the reported max charge is lower than
        return $ Battery (3600 * a' / sc') -- wattseconds
                         (3600 * b / sc') -- wattseconds
-                        (d / sc') -- watts
+                        (abs d / sc') -- watts
                         s -- string: Discharging/Charging/Full
     where grab f = handle onError $ withFile f ReadMode (fmap read . hGetLine)
           onError = const (return (-1)) :: SomeException -> IO Float
@@ -210,15 +242,8 @@ sortOn f =
 mostCommonDef :: Eq a => a -> [a] -> a
 mostCommonDef x xs = head $ last $ [x] : sortOn length (group xs)
 
-maybeAlert :: BattOpts -> Float -> IO ()
-maybeAlert opts left =
-  case onLowAction opts of
-    Nothing -> return ()
-    Just x -> unless (isNaN left || actionThreshold opts < 100 * left)
-                $ void $ system x
-
-readBatteries :: BattOpts -> [Files] -> IO Result
-readBatteries opts bfs =
+readBatteriesLinux :: BattOpts -> [Files] -> IO Result
+readBatteriesLinux opts bfs =
     do let bfs' = filter (/= NoFiles) bfs
        bats <- mapM (readBattery (scale opts)) (take 3 bfs')
        ac <- haveAc (onlineFile opts)
@@ -239,25 +264,34 @@ readBatteries opts bfs =
                  | otherwise = Discharging
        unless ac (maybeAlert opts left)
        return $ if isNaN left then NA else Result left watts time racst
+#endif
 
 runBatt :: [String] -> Monitor String
 runBatt = runBatt' ["BAT", "BAT0", "BAT1", "BAT2"]
 
 runBatt' :: [String] -> [String] -> Monitor String
 runBatt' bfs args = do
-  opts <- io $ parseOpts args
-  let sp = incPerc opts
-  c <- io $ readBatteries opts =<< mapM batteryFiles bfs
+  opts <- io $ parseOptsWith options defaultOpts args
+#ifdef FREEBSD
+  c <- io $ readBatteriesFbsd opts
+#else
+  c <- io $ readBatteriesLinux opts =<< mapM batteryFiles bfs
+#endif
+  formatResult c opts
+
+formatResult :: Result -> BattOpts -> Monitor String
+formatResult res bopt = do
+  let sp = incPerc bopt
   suffix <- getConfigValue useSuffix
   d <- getConfigValue decDigits
   nas <- getConfigValue naString
-  case c of
+  case res of
     Result x w t s ->
       do l <- fmtPercent x sp
-         ws <- fmtWatts w opts suffix d
-         si <- getIconPattern opts s x
+         ws <- fmtWatts w bopt suffix d
+         si <- getIconPattern bopt s x
          st <- showWithColors'
-                 (fmtStatus opts s nas (getBattStatus x opts))
+                 (fmtStatus bopt s nas (getBattStatus x bopt))
                  (100 * x)
          parseTemplate (l ++ [st, fmtTime $ floor t, ws, si])
     NA -> getConfigValue naString

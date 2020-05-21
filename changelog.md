@@ -1,15 +1,52 @@
-## Version 0.32
+## Version 0.34 (April, 2020)
 
 _New features_
 
+  - New plugin `HandleReader` for reading data from a Haskell `Handle`. This is
+    useful if you are running xmobar from within a Haskell program.
+  - Build with ghc 8.10 allowed.
+
+## Version 0.33 (February, 2020)
+
+_New features_
+
+  - New template parameter `<weather>` for the `Weather` plugin, potentially
+    displaying specific weather conditions that are occurring near the
+    station (thanks to *slotThe*).
+  - New option `--weathers`, for `Weather` to display a default string in
+    case the `weather` field is not reported (thanks to *slotThe*).
+  - New template parameter `<volumestatus>` for the `Volume` plugin, combining
+    the effects of `<volume>` and `<status>`.  This will show the volume
+    (possibly prefixed by `onString` or a percentage-based string) if and only
+    if the volume is not muted.  Otherwise it will show the
+    `offString` (thanks to *slotThe*).
+  - `Battery` and `BatteryN` now support FreeBSD (thanks to Dhananjay
+    Balan).
+  - New option `--useManager` for `Weather` and `UVMeter` to decide whether to
+    use one single manager per monitor for managing network connections or
+    create a new one every time a connection is made.
+  - New more efficient time coalescing strategy for monitor updates,
+    available with the threaded runtime: use the `with_threaded` flag
+    to enable it (see #410; thanks to Tomáš Janoušek).
+  - `Wireless` supports current nl80211 API on Linux now, old Wext ioctls still
+    available as compile-time option (thanks to Paul Fertser).
+
+## Version 0.32 (December, 2019)
+
+_New features_
+
+  - New options `--host` and `--port` for `MPD` monitor.
   - New plugin `MailX` extending `Mail` with colors and prefix/suffix.
   - New options `--lows`, `--mediums`, and `--highs` for `Battery`
     to display an additional string depending on battery level (thanks
-    to slotThe).
+    to *slotThe*).
   - New options `-L` and `-H` for `Volume` to set low and high volume
     levels, as well as `-l`, `-m`, and `-h` to display an additional
-    string depending on current volume level (thanks to slotThe).
+    string depending on current volume level (thanks to *slotThe*).
   - New option `-P` in `Battery` to add a `%` symbol to `<left>`.
+  - New option `--devices` in `DynNetwork` to select what interfaces
+    to monitor (thanks to *vindex10*).
+  - DateZone plugin now also checks TZDIR (thanks to Emmanuel Rosa).
 
 _Bug fixes_
 
