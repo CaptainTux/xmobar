@@ -51,6 +51,7 @@ weatherConfig = mkMConfig
        , "dewPointF"
        , "rh"
        , "pressure"
+       , "metar"
        ]
 
 data WindInfo =
@@ -79,6 +80,7 @@ data WeatherInfo =
        , dewPointF    :: Int
        , humidity     :: Int
        , pressure     :: Int
+       , metar        :: String
        } deriving (Show)
 
 pTime :: Parser (String, String, String, String)
@@ -177,8 +179,9 @@ parseData =
        rh <- pRh
        skipTillString "Pressure (altimeter): "
        p <- pPressure
+       ob <- getAfterString "ob: "
        manyTill skipRestOfLine eof
-       return [WI st ss y m d h w v sk tC tF dC dF rh p]
+       return [WI st ss y m d h w v sk tC tF dC dF rh p ob]
 
 defUrl :: String
 defUrl = "https://tgftp.nws.noaa.gov/data/observations/metar/decoded/"
@@ -201,13 +204,13 @@ formatSk ((a,b):sks) sk = if a == sk then b else formatSk sks sk
 formatSk [] sk = sk
 
 formatWeather :: [(String,String)] -> [WeatherInfo] -> Monitor String
-formatWeather sks [WI st ss y m d h (WindInfo wc wa wm wk wkh wms) v sk tC tF dC dF r p] =
+formatWeather sks [WI st ss y m d h (WindInfo wc wa wm wk wkh wms) v sk tC tF dC dF r p ob] =
     do cel <- showWithColors show tC
        far <- showWithColors show tF
        let sk' = formatSk sks (map toLower sk)
        parseTemplate [st, ss, y, m, d, h, wc, wa, wm, wk, wkh
                      , wms, v, sk, sk', cel, far
-                     , show dC, show dF, show r , show p ]
+                     , show dC, show dF, show r , show p , show ob]
 formatWeather _ _ = getConfigValue naString
 
 runWeather :: [String] -> Monitor String
